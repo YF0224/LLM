@@ -6,12 +6,11 @@ PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\
 
 class Tokenizer():
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None):
-        # 保存
         self.vocab: dict[int, bytes] = dict(vocab)
         self.merges: list[tuple[bytes, bytes]] = list(merges)
         self.special_tokens: list[str] = list(special_tokens) if special_tokens else []
-
-        # 确保 special tokens 在 vocab 里（如果不存在就追加）
+        
+        # 确保 special tokens 在 vocab 里
         vocab_values = set(self.vocab.values())
         for sp in self.special_tokens:
             sp_b = sp.encode("utf-8")
@@ -32,8 +31,6 @@ class Tokenizer():
 
     @classmethod
     def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
-        # vocab 文件：按你训练代码的输出格式来读
-        # 你学长那份示例是：json 里 key 是 token(字符串)，value 是 id
         with open(vocab_filepath, "r", encoding="utf-8") as f:
             vocab_data = json.load(f)
 
