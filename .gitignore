@@ -1,17 +1,24 @@
-.develop_references.py
+# macOS
 .DS_Store
-.vscode
 
-**/__pycache__
-**/__pycache__/
-**/.pytest_cache
-**/.pytest_cache/
+# Editor
+.vscode/
 
-**/.ipynb_checkpoints/
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual env
+.venv/
+
+# Build / runtime
 *.egg
-*.egg-info  
+*.egg-info
 *.txt.gz
 
-**/output/
+# Outputs
+output/
 cache*
 ckpt*
