@@ -148,8 +148,8 @@ def Softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
 def ScaledDotProductAttention(
     Q: Float[Tensor, " ... queries d_k"],
     K: Float[Tensor, " ... keys d_k"],
-    V: Float[Tensor, " ... keys d_v"],
-    mask: Bool[Tensor, " ... queries keys"] | None = None,
+    V: Float[Tensor, " ... values d_v"],
+    mask: Optional[Bool[Tensor, " ... queries keys"]] = None,
 ) -> Float[Tensor, " ... queries d_v"]:
     # scores: (..., queries, keys)
     scores = einsum(Q, K, "... q d, ... k d -> ... q k") / math.sqrt(Q.shape[-1])
@@ -177,7 +177,7 @@ class MultiheadSelfAttention(nn.Module):
         k_proj_weight: Tensor,  # (d_model, d_in)
         v_proj_weight: Tensor,  # (d_model, d_in)
         o_proj_weight: Tensor,  # (d_model, d_model) == (d_model, H*Dh)
-        rope: Optional[nn.Module] = None,  # RotaryPositionalEmbedding(theta, d_k=Dh, max_seq_len, ...)
+        rope: Optional[RotaryPositionalEmbedding] = None,  # RotaryPositionalEmbedding(theta, d_k=Dh, max_seq_len, ...)
     ):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"

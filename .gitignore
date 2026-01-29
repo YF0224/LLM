@@ -1,0 +1,17 @@
+.develop_references.py
+.DS_Store
+.vscode
+
+**/__pycache__
+**/__pycache__/
+**/.pytest_cache
+**/.pytest_cache/
+
+**/.ipynb_checkpoints/
+*.egg
+*.egg-info  
+*.txt.gz
+
+**/output/
+cache*
+ckpt*
