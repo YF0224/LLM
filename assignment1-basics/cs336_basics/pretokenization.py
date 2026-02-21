@@ -1,3 +1,4 @@
+# cs336_basics0/pretokenization
 import regex as re
 import os
 from typing import BinaryIO
@@ -194,3 +195,4 @@ def train_bpe(
         vocab[len(vocab)] = t
 
     return vocab, merges
+    

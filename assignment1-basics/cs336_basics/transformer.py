@@ -1,3 +1,4 @@
+# cs336_basics/transformer
 import torch
 import torch.nn as nn
 from einops import einsum
@@ -5,6 +6,7 @@ import math
 from jaxtyping import Bool, Float, Int
 from typing import Optional
 from torch import Tensor
+import torch.cuda.nvtx as nvtx
 
 class Linear(nn.Module):
     def __init__(self, in_features, out_features, device=None, dtype=None):
@@ -145,6 +147,7 @@ def Softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
     exp_x = torch.exp(x - torch.max(x, dim=dim, keepdim=True).values)
     return exp_x / torch.sum(exp_x, dim=dim, keepdim=True)
 
+@nvtx.range("scaled dot product attention")
 def ScaledDotProductAttention(
     Q: Float[Tensor, " ... queries d_k"],
     K: Float[Tensor, " ... keys d_k"],
@@ -152,14 +155,18 @@ def ScaledDotProductAttention(
     mask: Optional[Bool[Tensor, " ... queries keys"]] = None,
 ) -> Float[Tensor, " ... queries d_v"]:
     # scores: (..., queries, keys)
-    scores = einsum(Q, K, "... q d, ... k d -> ... q k") / math.sqrt(Q.shape[-1])
+    with nvtx.range("compute score"):
+        scores = einsum(Q, K, "... q d, ... k d -> ... q k") / math.sqrt(Q.shape[-1])
 
     if mask is not None:
         # mask=True means keep, mask=False means block
         scores = scores.masked_fill(~mask, torch.finfo(scores.dtype).min)
 
-    attn = Softmax(scores, dim=-1)  # normalize over keys
-    out = einsum(attn, V, "... q k, ... k dv -> ... q dv")
+    with nvtx.range("compute softmax"):
+        attn = Softmax(scores, dim=-1)  # normalize over keys
+    
+    with nvtx.range("final result"):
+        out = einsum(attn, V, "... q k, ... k dv -> ... q dv")
     return out
 
 class MultiheadSelfAttention(nn.Module):
@@ -190,10 +197,12 @@ class MultiheadSelfAttention(nn.Module):
         self.rope = rope
 
         # adapter 传入权重 -> buffer（默认不训练）
-        self.register_buffer("q_proj_weight", q_proj_weight)
-        self.register_buffer("k_proj_weight", k_proj_weight)
-        self.register_buffer("v_proj_weight", v_proj_weight)
-        self.register_buffer("o_proj_weight", o_proj_weight)
+        self.q_proj_weight = nn.Parameter(q_proj_weight)
+        self.k_proj_weight = nn.Parameter(k_proj_weight)
+        self.v_proj_weight = nn.Parameter(v_proj_weight)
+        self.o_proj_weight = nn.Parameter(o_proj_weight)
+
+        self.register_buffer("_causal_mask", torch.empty(0, 0, dtype=torch.bool), persistent=False)
 
     def forward(self, in_features: Tensor, token_positions: Optional[Tensor] = None) -> Tensor:
         """
@@ -224,20 +233,22 @@ class MultiheadSelfAttention(nn.Module):
             Q = self.rope(Q, token_positions)
             K = self.rope(K, token_positions)
 
-        # ---- 4) causal masked attention ----
-        scores = (Q @ K.transpose(-1, -2)) / math.sqrt(Dh)  # (..., H, T, T)
+        # ---- 4) causal mask (cached) ----
+        if self._causal_mask.numel() == 0 or self._causal_mask.size(0) < T or self._causal_mask.device != in_features.device:
+            self._causal_mask = torch.ones(T, T, device=in_features.device, dtype=torch.bool).tril()
 
-        causal = torch.tril(torch.ones(T, T, device=in_features.device, dtype=torch.bool))
-        mask = causal.view(*([1] * len(prefix)), 1, T, T)  # (..., 1, T, T) -> broadcast to (..., H, T, T)
+        mask = self._causal_mask[:T, :T].view(*([1] * len(prefix)), 1, T, T)  # (..., 1, T, T) broadcast to (..., H, T, T)
 
-        scores = scores.masked_fill(~mask, float("-inf"))
-        attn = torch.softmax(scores, dim=-1)
-        out = attn @ V  # (..., H, T, Dh)
+        # 5) attention output: (..., H, T, Dh)
+        attn_out = ScaledDotProductAttention(Q=Q, K=K, V=V, mask=mask)  # (..., H, T, Dh)
 
-        # ---- 5) merge heads + output projection ----
-        out = out.transpose(-3, -2).contiguous().view(*prefix, T, H * Dh)  # (..., T, d_model)
-        out = out @ self.o_proj_weight.t()  # (..., T, d_model)
-        return out
+        # 6) merge heads: (..., T, H*Dh) == (..., T, d_model)
+        attn_out = attn_out.transpose(-3, -2).contiguous().view(*prefix, T, H * Dh)
+
+        # 7) output projection: (..., T, d_model)
+        attn_out = attn_out @ self.o_proj_weight.t()
+
+        return attn_out
     
 class TransformerBlock(nn.Module):
     """
@@ -265,7 +276,9 @@ class TransformerBlock(nn.Module):
         Wk = torch.empty(d_model, d_model, device=device, dtype=dtype)
         Wv = torch.empty(d_model, d_model, device=device, dtype=dtype)
         Wo = torch.empty(d_model, d_model, device=device, dtype=dtype)
-        nn.init.zeros_(Wq); nn.init.zeros_(Wk); nn.init.zeros_(Wv); nn.init.zeros_(Wo)
+        
+        for W in (Wq, Wk, Wv, Wo):
+            nn.init.trunc_normal_(W, mean=0.0, std=0.02, a=-0.06, b=0.06)
 
         self.attn = MultiheadSelfAttention(
             d_model=d_model,

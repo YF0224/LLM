@@ -1,5 +1,7 @@
+# cs336_basics/tokenization
 import json
 import regex as re
+import base64
 from typing import Iterable, Iterator
 
 PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
@@ -28,37 +30,30 @@ class Tokenizer():
             self._special_split_re = re.compile("(" + "|".join(re.escape(x) for x in st_sorted) + ")")
         else:
             self._special_split_re = None
+            
+    @staticmethod
+    def _b64d(s: str) -> bytes:
+        return base64.b64decode(s.encode("ascii"))
 
     @classmethod
-    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens=None):
         with open(vocab_filepath, "r", encoding="utf-8") as f:
             vocab_data = json.load(f)
 
-        # 兼容两种常见格式：
-        # A) {"token_str": id, ...}
-        # B) {"id_str": "token_str", ...}
-        vocab: dict[int, bytes] = {}
-        if vocab_data:
-            sample_k = next(iter(vocab_data.keys()))
-            sample_v = vocab_data[sample_k]
-            if isinstance(sample_v, int):
-                # A
-                vocab = {int(v): k.encode("utf-8") for k, v in vocab_data.items()}
-            else:
-                # B
-                vocab = {int(k): str(v).encode("utf-8") for k, v in vocab_data.items()}
+        # vocab.json: {"<b64_token>": id}
+        vocab = {int(v): cls._b64d(k) for k, v in vocab_data.items()}
 
-        # merges 文件：每行两个 token（按空格分隔）
-        merges: list[tuple[bytes, bytes]] = []
+        merges = []
         with open(merges_filepath, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
-                a, b = line.split(" ")
-                merges.append((a.encode("utf-8"), b.encode("utf-8")))
+                a_b64, b_b64 = line.split()   # split() 足够，因为 b64 不含空格
+                merges.append((cls._b64d(a_b64), cls._b64d(b_b64)))
 
-        return cls(vocab, merges, special_tokens)
+        return cls(vocab=vocab, merges=merges, special_tokens=special_tokens)
+
 
     def _apply_merges(self, token_bytes: bytes) -> list[bytes]:
         # 预分词单元 token_bytes 先拆成单字节 pieces
